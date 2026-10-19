@@ -1,0 +1,43 @@
+# Minecraft Paper/Spigot Diagnostics (Python)
+
+Bộ kiểm tra chẩn đoán lưu lượng thấp dành cho máy chủ Minecraft Java Paper/Spigot mà bạn sở hữu hoặc được ủy quyền quản lý. Đây không phải công cụ DDoS/flood.
+
+## Chức năng
+
+- **TCP IPv4:** thử mở kết nối TCP tới port Minecraft và đo thời gian kết nối.
+- **TCP IPv6:** thử kết nối TCP qua IPv6 nếu hostname có bản ghi AAAA hoặc bạn nhập IPv6 trực tiếp. IPv6 là phiên bản IP, không phải tầng OSI Layer 6.
+- **Minecraft Status/Ping:** gửi truy vấn status chuẩn của Minecraft Java, ghi phiên bản, số người chơi và độ trễ phản hồi.
+- **Bộ kiểm tra tổng hợp:** chạy lần lượt ba kiểm tra, giới hạn tối đa 20 lượt cho mỗi lần chạy.
+- **CSV log:** kết quả được lưu ở `diagnostics.csv`.
+
+## Yêu cầu
+
+- Python 3.10 trở lên được khuyến nghị.
+- Minecraft Java server Paper/Spigot; port mặc định `25565`.
+
+## Chạy trên Windows
+
+1. Cài Python từ https://www.python.org/downloads/ (đánh dấu tùy chọn thêm Python vào PATH).
+2. Giải nén project.
+3. Chạy `run_windows.bat`, hoặc chạy thủ công:
+
+```powershell
+py -m pip install -r requirements.txt
+py mc_diag.py
+```
+
+## Chạy trên Linux
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 mc_diag.py
+```
+
+## Đọc kết quả
+
+- `TCP/IPv4` hoặc `TCP/IPv6` thành công nhưng status ping lỗi: port có thể mở nhưng dịch vụ Minecraft không phản hồi status, hoặc bị proxy/firewall/chính sách mạng chặn.
+- Cả TCP và status đều thất bại: kiểm tra IP/port, firewall, port forwarding, DNS và trạng thái tiến trình server.
+- Không có IPv6: thường có nghĩa hostname không có bản ghi AAAA hoặc tuyến IPv6 không khả dụng; không có nghĩa server bị lỗi nếu bạn chỉ triển khai IPv4.
+- So sánh độ trễ ở nhiều thời điểm; một lần kiểm tra không đủ để kết luận server có vấn đề.
+
+Các lượt chạy bị giới hạn tối đa 20 và tối thiểu 1 giây nghỉ giữa lượt. Chỉ kiểm tra máy chủ thuộc quyền quản lý/được cho phép của bạn; với kiểm thử tải thực sự, hãy dùng staging và công cụ benchmark được giới hạn tốc độ, có giám sát tài nguyên.
