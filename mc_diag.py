@@ -7,7 +7,7 @@ not generate floods, spoof packets, or attempt to exhaust server resources.
 from __future__ import annotations
 
 import csv
-import os
+import ipaddress
 import socket
 import sys
 import time
@@ -42,7 +42,7 @@ def normalize_host(raw: str) -> str:
     return host
 
 
-def log_result(test: str, host: str, port: int, success: bool,
+def log_result(test: str, host: str, port: int, success: bool | None,
                latency_ms: float | None, details: str) -> None:
     new_file = not LOG_PATH.exists() or LOG_PATH.stat().st_size == 0
     with LOG_PATH.open("a", newline="", encoding="utf-8") as f:
@@ -54,7 +54,7 @@ def log_result(test: str, host: str, port: int, success: bool,
             "test": test,
             "host": host,
             "port": port,
-            "success": "yes" if success else "no",
+            "success": "yes" if success is True else ("skip" if success is None else "no"),
             "latency_ms": "" if latency_ms is None else f"{latency_ms:.2f}",
             "details": details.replace("\n", " ").replace("\r", " "),
         })
@@ -62,11 +62,31 @@ def log_result(test: str, host: str, port: int, success: bool,
 
 def tcp_check(host: str, port: int, family: int, timeout: float = 3.0) -> dict[str, Any]:
     label = "TCP/IPv4" if family == socket.AF_INET else "TCP/IPv6"
+
+    # An IPv4 literal cannot be tested with an IPv6 socket. This is not a server failure.
+    if family == socket.AF_INET6:
+        try:
+            parsed = ipaddress.ip_address(host)
+            if parsed.version == 4:
+                return {
+                    "test": label, "ok": False, "skip": True, "latency": None,
+                    "details": "Bỏ qua: bạn nhập IPv4, không phải địa chỉ IPv6. "
+                               "Muốn kiểm tra IPv6, hãy nhập IPv6 trực tiếp hoặc hostname có bản ghi DNS AAAA.",
+                }
+        except ValueError:
+            pass  # It may be a hostname or an IPv6 literal; let getaddrinfo resolve it.
+
     try:
         infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     except socket.gaierror as exc:
+        if family == socket.AF_INET6:
+            return {
+                "test": label, "ok": False, "skip": True, "latency": None,
+                "details": f"Bỏ qua kiểm tra IPv6: không tìm được địa chỉ IPv6 cho {host!r} "
+                           f"hoặc máy/mạng chưa hỗ trợ IPv6 ({exc}). Kiểm tra IPv4 vẫn có thể dùng bình thường.",
+            }
         return {"test": label, "ok": False, "latency": None,
-                "details": f"Không tìm thấy địa chỉ phù hợp: {exc}"}
+                "details": f"Không phân giải được hostname/IP {host!r}: {exc}"}
 
     errors: list[str] = []
     for af, socktype, proto, _canonname, sockaddr in infos:
@@ -78,6 +98,8 @@ def tcp_check(host: str, port: int, family: int, timeout: float = 3.0) -> dict[s
             ms = (time.perf_counter() - start) * 1000
             return {"test": label, "ok": True, "latency": ms,
                     "details": f"Kết nối TCP thành công tới {sockaddr[0]}:{port}"}
+        except ConnectionRefusedError:
+            errors.append(f"{sockaddr[0]}: kết nối bị từ chối (port không có dịch vụ lắng nghe hoặc firewall chủ động từ chối)")
         except OSError as exc:
             errors.append(f"{sockaddr[0]}: {exc}")
     return {"test": label, "ok": False, "latency": None,
@@ -102,16 +124,29 @@ def minecraft_status_check(host: str, port: int, timeout: float = 3.0) -> dict[s
         details = f"Phản hồi status hợp lệ; version={version}; players={online}/{maximum}"
         return {"test": "Minecraft Status (L7)", "ok": True,
                 "latency": latency, "details": details}
-    except Exception as exc:  # include library/network errors in the diagnostic log
+    except ConnectionRefusedError as exc:
         return {"test": "Minecraft Status (L7)", "ok": False, "latency": None,
-                "details": f"Status ping thất bại: {type(exc).__name__}: {exc}"[:500]}
+                "details": f"Server từ chối kết nối tới {host}:{port} ({exc}). Kiểm tra đúng port public, "
+                           "server đang chạy, server-port trong server.properties, port-forwarding/firewall; "
+                           "nếu dùng Velocity/BungeeCord, hãy dùng port của proxy."}
+    except TimeoutError as exc:
+        return {"test": "Minecraft Status (L7)", "ok": False, "latency": None,
+                "details": f"Hết thời gian chờ status ping tới {host}:{port} ({exc}). Kiểm tra định tuyến, firewall và port public."}
+    except Exception as exc:  # include library/network errors in the diagnostic log
+        detail = f"Status ping thất bại: {type(exc).__name__}: {exc}"
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) == 111:
+            detail += ". Kiểm tra server đang lắng nghe trên đúng port và port đó được mở từ Internet."
+        return {"test": "Minecraft Status (L7)", "ok": False, "latency": None,
+                "details": detail[:500]}
 
 
 def print_result(result: dict[str, Any], host: str, port: int) -> None:
-    mark = "OK" if result["ok"] else "FAIL"
+    skipped = bool(result.get("skip", False))
+    mark = "SKIP" if skipped else ("OK" if result["ok"] else "FAIL")
     latency = "—" if result["latency"] is None else f'{result["latency"]:.2f} ms'
     print(f'[{mark}] {result["test"]:<23} | {latency:>12} | {result["details"]}')
-    log_result(result["test"], host, port, result["ok"], result["latency"], result["details"])
+    log_success = None if skipped else result["ok"]
+    log_result(result["test"], host, port, log_success, result["latency"], result["details"])
 
 
 def get_int(prompt: str, default: int, minimum: int, maximum: int) -> int:
@@ -166,6 +201,8 @@ def run_tests(mode: str, host: str, port: int) -> None:
             if i + 1 < runs:
                 time.sleep(interval)
         print(f"\nHoàn tất. Log CSV: {LOG_PATH}")
+        print("Gợi ý: nếu cả TCP/IPv4 và Minecraft Status đều báo 'connection refused', "
+              "hãy xác minh port public và trạng thái server; lỗi này thường không phải do công cụ.")
     except KeyboardInterrupt:
         print(f"\nĐã dừng theo yêu cầu. Log CSV: {LOG_PATH}")
 

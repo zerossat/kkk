@@ -41,3 +41,9 @@ python3 mc_diag.py
 - So sánh độ trễ ở nhiều thời điểm; một lần kiểm tra không đủ để kết luận server có vấn đề.
 
 Các lượt chạy bị giới hạn tối đa 20 và tối thiểu 1 giây nghỉ giữa lượt. Chỉ kiểm tra máy chủ thuộc quyền quản lý/được cho phép của bạn; với kiểm thử tải thực sự, hãy dùng staging và công cụ benchmark được giới hạn tốc độ, có giám sát tài nguyên.
+
+## Xử lý kết quả `FAIL` / `SKIP`
+
+- `SKIP` ở TCP/IPv6 khi nhập một IPv4 (ví dụ `180.93.103.30`) là bình thường: địa chỉ IPv4 không thể được kiểm tra bằng socket IPv6. Nếu server chỉ có IPv4 thì có thể bỏ qua kiểm tra này.
+- `Connection refused` ở TCP/IPv4 hoặc Minecraft Status có nghĩa là kết nối tới IP/port đã bị từ chối. Hãy xác minh port công khai, server đang chạy, `server-port` trong `server.properties`, firewall của máy chủ/nhà cung cấp và cấu hình NAT/port-forwarding. Nếu dùng Velocity/BungeeCord, hãy kiểm tra port public của proxy.
+- Trong `diagnostics.csv`, cột `success` ghi `yes`, `no` hoặc `skip`.
